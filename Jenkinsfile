@@ -2,10 +2,9 @@
 
 pipeline {
 
-
   environment {
     origin = 'platform-core'
-    branch = 'snapshot'
+    branch = 'install_json-snapshot'
     folioRegistry = 'http://folio-registry.aws.indexdata.com'
   }
 
@@ -23,71 +22,114 @@ pipeline {
   stages {
     stage('Setup') {
       steps {
+        sendNotifications 'STARTED'
         script {
           currentBuild.displayName = "#${env.BUILD_NUMBER}-${env.JOB_BASE_NAME}"
-        }
-        sendNotifications 'STARTED'
-      }
-    }
+          def lastCommit = sh(returnStatus: true,
+                              script: "git log -1 | grep '.*\\[CI SKIP\\].*'")
 
-    stage('Build Stripes Platform') {
-      steps {
-        // the tenant and okapi url are irrelevant here. 
-        buildStripesPlatform('https://folio-snapshot-core-okapi.aws.indexdata.com','diku')
-      }
-    }
-
-    stage('Test Interface Dependencies') {
-      steps { 
-        script {
-          def stripesInstallJson = readFile('./stripes-install.json')
-          platformDepCheck('diku',stripesInstallJson)
+          if (lastCommit == 0) { 
+              echo "CI SKIP detected.  Aborting build" 
+              env.skipBuild = 'true'
+          } 
         }
       }
     }
+   
+    stage('Do Build') {
+       when {
+         expression {
+           env.skipBuild != 'true'
+         }
+       }  
 
-    // If stripes build is successful, update yarn.lock and commit
-    stage('Commit yarn.lock') {
-      when { 
-        anyOf {
-          environment name:  'JOB_NAME', value: 'Automation/build-platform-core-snapshot'
-          branch 'snapshot'
-        }
-      }
-      steps {
-        sh "git checkout $env.branch"
-        sh 'git add yarn.lock'
-        script { 
-          def commitStatus = sh(returnStatus: true, 
-                                script: 'git commit -m "FOLIO CI: Update yarn.lock"')
-          if ( commitStatus == 0 ) {
-            sshGitPush(origin: env.origin, branch: env.branch)
-          }
-          else {
-            echo "No changes to yarn.lock file"
-          }
+       stages {
+         stage('Build Stripes Platform') {
+           //when {
+           //  not {
+           //    branch 'snapshot'
+           //  }
+           //} 
+           steps {
+             // the tenant and okapi url are irrelevant here. 
+             buildStripesPlatform('https://localhost:9130','diku')
+           }
+         }
 
-        }
-      }
-    }
+         stage('Check Interface Dependencies') {
+           // when {
+           //  not {
+           //    branch 'master'
+           //  }
+           // }
+           steps { 
+             script {
+               def foliociLib = new org.folio.foliociCommands()
+               def stripesInstallJson = readFile('./stripes-install.json')
 
-    stage('Publish Snapshot NPM') {
-      when {
-        buildingTag()
-      }
-      steps {
-        // clean up any generated stuff from CI
-        sh 'rm -rf bundle output artifacts ci node_modules yarn.lock ModuleDescriptors'
+               platformDepCheck('diku',stripesInstallJson)
+               echo 'Generating backend dependency list to okapi-install.json' 
+               sh 'jq \'map(select(.id | test(\"mod-\"; \"i\")))\' install.json > okapi-install.json'
+               sh 'cat okapi-install.json'
+             }
+           }
+         }
 
-        withCredentials([string(credentialsId: env.npmConfig,variable: 'NPM_TOKEN')]) {
-          withNPM(npmrcConfig: env.npmConfig) {
-            sh 'npm publish'
-          }
-        }
-      }
-    }
+         // If stripes build is successful, update yarn.lock and commit
+         stage('Update Branch Install Artifacts') {
+           when { 
+             anyOf {
+               environment name:  'JOB_NAME', value: 'Automation/build-platform-core-snapshot'
+               branch 'install_json-snapshot'
+             }
+           }
+           steps {
+             script {
+               def installFiles = ['stripes-install.json',
+                                   'okapi-install.json',
+                                   'install.json',
+                                   'yarn.lock']
 
-  } // end stages
+               sh "git checkout $env.branch"
+               sh 'git add yarn.lock'
+
+               for (int i = 0; i < installFiles.size(); i++) {
+                sh "git add ${env.WORKSPACE}/${installFiles[i]}"
+               } 
+
+               def commitStatus = sh(returnStatus: true, 
+                                     script: 'git commit -m "[CI SKIP] Updating install files"')
+
+               if ( commitStatus == 0 ) {
+                 sshGitPush(origin: env.origin, branch: env.branch)
+               }
+               else {
+                 echo "No changes to artifacts"
+               }
+             }
+           }
+         }
+
+         stage('Publish Snapshot NPM') {
+           when {
+             buildingTag()
+           }
+           steps {
+             // clean up any generated stuff from CI
+             sh 'rm -rf bundle output artifacts ci node_modules ModuleDescriptors'
+             sh 'rm -rf yarn.lock install.json stripes-install.json okapi-install.json'
+
+             withCredentials([string(credentialsId: env.npmConfig,variable: 'NPM_TOKEN')]) {
+               withNPM(npmrcConfig: env.npmConfig) {
+                 sh 'npm publish'
+               }
+             }
+           }
+         }
+
+      }    //end 'do buid' stage
+    }     // end inner stages 
+  }      // end outter stages
 
   post {
     always {
