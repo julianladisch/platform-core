@@ -12,7 +12,7 @@
     "action": "enable"
   },
   {
-    "id": "mod-users-16.2.1-SNAPSHOT.129",
+    "id": "mod-users-16.2.1-SNAPSHOT.130",
     "action": "enable"
   },
   {
@@ -89,6 +89,10 @@
   },
   {
     "id": "mod-login-saml-1.4.0-SNAPSHOT.48",
+    "action": "enable"
+  },
+  {
+    "id": "mod-codex-inventory-1.7.0-SNAPSHOT.78",
     "action": "enable"
   }
 ]
