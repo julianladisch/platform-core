@@ -45,11 +45,6 @@ pipeline {
 
        stages {
          stage('Build Stripes Platform') {
-           //when {
-           //  not {
-           //    branch 'snapshot'
-           //  }
-           //} 
            steps {
              // the tenant and okapi url are irrelevant here. 
              buildStripesPlatform('https://localhost:9130','diku')
@@ -57,16 +52,13 @@ pipeline {
          }
 
          stage('Check Interface Dependencies') {
-           // when {
-           //  not {
-           //    branch 'master'
-           //  }
-           // }
            steps { 
              script {
-               def foliociLib = new org.folio.foliociCommands()
-               def stripesInstallJson = readFile('./stripes-install.json')
+               echo "Adding additional modules to stripes-install.json"
+               sh 'mv stripes-install.json stripes-install-pre.json'
+               sh 'jq -s \'.[0]=([.[]]|flatten)|.[0]\' stripes-install-pre.json install-extras.json > stripes-install.json'
 
+               def stripesInstallJson = readFile('./stripes-install.json')
                platformDepCheck('diku',stripesInstallJson)
                echo 'Generating backend dependency list to okapi-install.json' 
                sh 'jq \'map(select(.id | test(\"mod-\"; \"i\")))\' install.json > okapi-install.json'
